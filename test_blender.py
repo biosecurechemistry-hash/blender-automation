@@ -29,42 +29,50 @@ def build_dynamic_geometry(data):
     secondary_color = hex_to_rgb(colors[1]) if len(colors) > 1 else (0.2, 0.2, 0.2, 1.0)
 
     for idx, scene_data in enumerate(scenes, start=1):
-        mesh = bpy.data.meshes.new(f"Mesh_Scene_{idx}")
-        obj = bpy.data.objects.new(f"Asset_Scene_{idx}", mesh)
-        bpy.context.collection.objects.link(obj)
-        
-        bm = bmesh.new()
         x_offset = (idx - 1) * 4.0
-        
-        # --- PARSING RULE: Check text keywords to change shapes dynamically ---
         description = scene_data.get("description", "").lower()
-        if "salt" in description or "crystal" in description:
-            # Generate a crystalline icosphere shape for salt
-            bmesh.ops.create_icosphere(bm, subdivisions=2, radius=1.0)
-        elif "rose" in description or "petal" in description:
-            # Generate a flat petal-like torus disc
-            bmesh.ops.create_torus(bm, ring_radius=0.8, pipe_radius=0.2)
+
+        # --- PARSING RULE: Check text keywords to change shapes dynamically ---
+        if "rose" in description or "petal" in description:
+            # bmesh.ops.create_torus was removed in Blender 5.1
+            # Use object-level torus primitive instead
+            bpy.ops.mesh.primitive_torus_add(
+                major_radius=0.8, minor_radius=0.2,
+                align='WORLD', location=(x_offset, 0, 0)
+            )
+            obj = bpy.context.object
+            obj.name = f"Asset_Scene_{idx}"
+            obj.data.name = f"Mesh_Scene_{idx}"
         else:
-            # Fallback to standard tracking block cube
-            bmesh.ops.create_cube(bm, size=1.5)
-        
-        # Apply the layout layout offset spacing along the X-axis
-        for v in bm.verts:
-            v.co.x += x_offset
-            
-        bm.to_mesh(mesh)
-        bm.free()
+            mesh = bpy.data.meshes.new(f"Mesh_Scene_{idx}")
+            obj = bpy.data.objects.new(f"Asset_Scene_{idx}", mesh)
+            bpy.context.collection.objects.link(obj)
+
+            bm = bmesh.new()
+            if "salt" in description or "crystal" in description:
+                # Generate a crystalline icosphere shape for salt
+                bmesh.ops.create_icosphere(bm, subdivisions=2, radius=1.0)
+            else:
+                # Fallback to standard tracking block cube
+                bmesh.ops.create_cube(bm, size=1.5)
+
+            # Apply the layout offset spacing along the X-axis
+            for v in bm.verts:
+                v.co.x += x_offset
+
+            bm.to_mesh(mesh)
+            bm.free()
 
         mat = bpy.data.materials.new(name=f"Mat_Scene_{idx}")
-        mat.use_nodes = True
+        # use_nodes is True by default in Blender 5.1+ (removed in 6.0)
         nodes = mat.node_tree.nodes
         principled = nodes.get("Principled BSDF")
-        
+
         if principled:
             principled.inputs['Base Color'].default_value = primary_color if idx % 2 != 0 else secondary_color
             principled.inputs['Roughness'].default_value = 0.15 if idx % 2 != 0 else 0.6
             principled.inputs['Metallic'].default_value = 0.4 if idx % 2 != 0 else 0.0
-            
+
         obj.data.materials.append(mat)
         
     return scene_count
