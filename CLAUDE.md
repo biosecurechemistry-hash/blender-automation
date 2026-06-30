@@ -31,7 +31,7 @@ POST /api/render  →  listen_blender.py (HTTP server, port 5000)
 
 Geometry shape is chosen by keyword matching against `scene.description`:
 - **"salt" or "crystal"** → icosphere (radius 1.0, subdivisions 2)
-- **"rose" or "petal"** → torus (ring_radius 0.8, pipe_radius 0.2)
+- **"rose" or "petal"** → torus (major_radius 0.8, minor_radius 0.2), uses `bpy.ops.mesh.primitive_torus_add` (not bmesh — `bmesh.ops.create_torus` was removed in Blender 5.1)
 - **Default** → cube (size 1.5)
 
 Each scene object is offset along the X-axis by `(scene_index - 1) * 4.0` units. Materials alternate between the first two colors from `tailwind_css_theme.color_scheme`: odd-indexed scenes get the primary color (roughness 0.15, metallic 0.4), even-indexed scenes get the secondary color (roughness 0.6, metallic 0.0).
