@@ -4,68 +4,124 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-This is a Blender automation pipeline that receives JSON payloads over HTTP and renders them as 3D `.blend` scene files. An external system (n8n, MCP client, etc.) POSTs campaign/product data to port 5000, and Blender generates dynamic geometry with camera animation headlessly.
+This is a Blender automation pipeline that receives JSON payloads over HTTP and renders them as 3D `.blend` scene files + PNG animation frames. An external system (n8n, MCP client, etc.) POSTs campaign/product data, and Blender generates dynamic geometry headlessly.
+
+There are **two versions of the Blender scene generator**, and the repo supports **two entry points** for receiving payloads (a three-tier pipeline for production, and a simpler direct server for testing).
 
 ## Architecture
 
+### Production pipeline (three tiers)
+
 ```
-POST /api/render  →  listen_blender.py (HTTP server, port 5000)
-                    ├─ Saves payload → payload_{id}.json
-                    ├─ Queues job in sequential worker thread
-                    └─ Spawns: blender.exe --background --python test_blender.py -- payload_{id}.json
-                                  └─ Reads JSON, builds 3D scenes, saves output_{id}.blend
+n8n / external system
+  │  POST to port 42617
+  ▼
+autonomous_director.py   (port 42617 — AutonomousOrchestrator)
+  │  Sanitizes payload (strips leading `=` from descriptions, ensures sessionId)
+  │  Forwards to port 5000
+  ▼
+listen_blender.py        (port 5000 — HTTP server + sequential job queue)
+  │  Saves payload → payload_{uniqueId}.json
+  │  Queues job in single background worker thread
+  │  Spawns: blender.exe --background --python test_blender.py -- payload_{id}.json
+  ▼
+test_blender.py          (Blender Python script)
+  │  Builds 3D scenes, renders PNG frames, saves output_{campaign_title}.blend
 ```
 
-- **`listen_blender.py`** — HTTP server + sequential job queue. Accepts POST at `/api/render`, immediately returns 200 to the client, then hands work off to a single background worker thread that runs Blender subprocesses one at a time. This prevents concurrent Blender instances from colliding.
-- **`test_blender.py`** — The active Blender Python script. Clears the default scene, builds dynamic geometry from JSON data, creates materials, sets up a camera with keyframed animation, and saves the result.
-- **`test_blender2.py`** — Earlier/alternative Blender script. Uses a different JSON schema (`content`, `mesh_type`, `id`). Unlike `test_blender.py`, this script expects **pre-existing named objects** in a `.blend` file (e.g. an `EndingRemarks` text object) — it modifies an existing scene rather than building one from scratch. Renders animation directly (`bpy.ops.render.render(animation=True)`) rather than saving a `.blend`.
+### Direct/testing entry point
 
-## Key conventions
+```
+curl POST to port 5000  →  listen_blender.py  →  test_blender.py
+```
 
-- Payload files: `payload_{cleanId}.json` → Output files: `output_{cleanId}.blend`
-- Session IDs are sanitized to `[a-zA-Z0-9_-]` before use in filenames. If sanitization yields an empty string, the fallback is `"campaign_asset"`.
-- The `.blend1` files are Blender's automatic backup files (generated on save).
-- Blender executable path is **hardcoded** in `listen_blender.py`: `C:\Program Files\Blender Foundation\Blender 5.1\blender.exe`. Upgrading Blender requires updating this path.
+Bypassing the autonomous director is fine for local testing — send directly to `http://localhost:5000/api/render`.
 
-## Dynamic geometry rules (in `test_blender.py`)
+## Source files
 
-Geometry shape is chosen by keyword matching against `scene.description`:
-- **"salt" or "crystal"** → icosphere (radius 1.0, subdivisions 2)
-- **"rose" or "petal"** → torus (major_radius 0.8, minor_radius 0.2), uses `bpy.ops.mesh.primitive_torus_add` (not bmesh — `bmesh.ops.create_torus` was removed in Blender 5.1)
-- **Default** → cube (size 1.5)
+### `listen_blender.py` — HTTP server + sequential job queue
+- Listens on `0.0.0.0:<BLENDER_PORT>` (default 5000). Configurable via `BLENDER_PORT` env var.
+- `POST /api/render`: accepts JSON, saves payload to disk, immediately returns `{"status": "queued", "id": "<uniqueId>"}`, then hands work to a single daemon background worker thread that runs Blender subprocesses sequentially (prevents concurrent Blender instances from colliding).
+- Blender executable path: configurable via `BLENDER_EXE` env var (default: `"blender"`). Production typically uses `"C:\Program Files\Blender Foundation\Blender 5.1\blender.exe"`.
+- PID file (`server.pid`) prevents duplicate instances. Stale PID files (process no longer alive) are auto-cleaned on startup.
+- Payload filenames: `payload_{cleanId}_{timestamp}.json` — timestamp (epoch ms) prevents collisions when the same sessionId arrives twice before the first job dequeues.
+- Session IDs are sanitized to `[a-zA-Z0-9_-]`; fallback is `"campaign_asset"` if sanitization yields an empty string.
+- Each Blender subprocess has a 300-second timeout.
 
-Each scene object is offset along the X-axis by `(scene_index - 1) * 4.0` units. Materials alternate between the first two colors from `tailwind_css_theme.color_scheme`: odd-indexed scenes get the primary color (roughness 0.15, metallic 0.4), even-indexed scenes get the secondary color (roughness 0.6, metallic 0.0).
+### `autonomous_director.py` — Pre-processing proxy (port 42617)
+- Sits **in front of** `listen_blender.py`. External systems POST here instead of directly to port 5000.
+- Sanitizes payloads before forwarding: strips leading `=` characters from `video_timeline[].description` fields (fixes upstream formatting artifacts), ensures `sessionId` is populated (falls back to `payload.id` or `"autonomous_organic_generation"`).
+- Forwards cleaned payload via `requests.post` to `http://127.0.0.1:5000/api/render` and returns the blended response.
+- Must be running **before** `listen_blender.py` for the production pipeline to work end-to-end.
 
-Camera animation: starts at X=0.0 on frame 1, ends at X=`(scene_count - 1) * 4.0` on frame `scene_count * 30`, with linear interpolation.
+### `test_blender.py` — Molecular cluster scene generator (current/active)
+- **Current payload schema:** reads `campaign_title` (default `"Dynamic_Asset"`) and `prompt_brief` (default `""`) from the JSON payload file. Does NOT use `shopify_handle`, `tailwind_css_theme`, or `video_timeline`.
+- Clears all default objects and materials, then builds a procedural twisting molecular structure:
+  - A `PLAIN_AXES` empty anchor named `Cluster_{campaign_title}`
+  - 12 child ico-spheres (subdivisions 3, radius 0.45) arranged in a 1.5-rotation helix along the Z axis
+  - Chrome material (fully metallic, mirror finish) applied to all child elements
+  - Sun key light + blue area fill light for dual-toned shadow bands
+  - Cinematic camera (100mm macro lens, f/0.2 depth of field, damped-track constraint on the cluster)
+  - 120-frame animation
+- **Renders** all 120 frames as PNGs to `C:\Users\Public\Documents\BlenderAutomationOutputs\{campaign_title}_frame_####.png`
+- Saves the master `.blend` as `output_{campaign_title}.blend`
+- Hardcoded output path: `C:\Users\Public\Documents\BlenderAutomationOutputs\` — changing the working directory requires updating this path in the script.
 
-## JSON payload schema
+### `test_blender2.py` — Identical to `test_blender.py`
+- Byte-for-byte identical copy of `test_blender.py`. Both build the same molecular cluster scene. If one is modified, the other should be updated or removed to avoid confusion.
 
-`test_blender.py` reads these fields, **all of which are optional** — the script falls back to sensible defaults when any field is missing:
+### `test_hotel_organic.py` — End-to-end integration test
+- Connects to a **Postgres ledger database** on `100.104.14.63:5433` (Tailscale) and queries for a product row matching `LIKE '%organic%'`.
+- Constructs a payload with `shopify_handle`, `id`, `tailwind_css_theme.color_scheme`, and a single `video_timeline` entry (with a leading `=` prepended to the description — this is intentional, testing the autonomous director's sanitization).
+- POSTs the payload to `http://localhost:42617` (the autonomous director), exercising the full three-tier pipeline: director → listen_blender → Blender.
+- Falls back to a hardcoded "Hotel Organic" product if the DB query returns no rows.
+- Contains hardcoded DB credentials — not for production use outside this machine.
 
-| Field | Default if missing | Purpose |
+## Running
+
+```bash
+# Production pipeline (three tiers):
+python autonomous_director.py    # Terminal 1: proxy on port 42617
+python listen_blender.py          # Terminal 2: queue engine on port 5000
+
+# Direct testing (single tier, bypass director):
+python listen_blender.py          # port 5000 only
+
+# Integration test:
+python test_hotel_organic.py      # Queries DB → director → blender
+
+# Direct Blender invocation (skip server):
+"C:\Program Files\Blender Foundation\Blender 5.1\blender.exe" --background --python test_blender.py -- payload.json
+```
+
+On Unix, set `BLENDER_EXE` to the correct path before starting `listen_blender.py`.
+
+## Environment variables
+
+| Variable | Default | Used by |
 |---|---|---|
-| `shopify_handle` | `"default_product"` | Product identifier (used for logging only, not file naming) |
-| `tailwind_css_theme.color_scheme` | `["#FFFFFF"]` | Array of hex colors; index 0 = odd scenes, index 1 = even scenes |
-| `video_timeline` | `[]` (treated as 3 empty scenes) | Array of scene objects, each optionally with `description` to drive shape selection |
+| `BLENDER_EXE` | `"blender"` | `listen_blender.py` — path to Blender executable |
+| `BLENDER_PORT` | `5000` | `listen_blender.py` — TCP port to listen on |
 
-If `video_timeline` is empty or missing, 3 default cube scenes are generated.
+## File naming conventions
 
-Many production payloads use a **simpler blog-post schema** with fields like `title`, `content`, `sessionId`, `id`, and `shopify_handle` — without `tailwind_css_theme` or `video_timeline`. The script handles both shapes gracefully via its fallback defaults.
-
-## Running the server
-
-```
-python listen_blender.py
-```
-
-Listens on `0.0.0.0:5000`. The server is stateless — restarting it clears the in-memory job queue but does not affect saved payload/output files on disk.
-
-## Operational notes
-
-- `curlinsever.txt` contains operational references including a bearer token, cloudflared tunnel setup, and Tailscale networking commands. This file is a scratchpad, not documentation.
-- The server directory is `C:\Users\Public\Documents\BlenderAutomationOutputs`.
-- Claude Code permissions are configured in `.claude/settings.local.json`.
+- **Payload files:** `payload_{cleanId}_{timestamp}.json` (where `cleanId` is the sanitized sessionId, `timestamp` is epoch ms)
+- **Output .blend files:** `output_{campaign_title}.blend`
+- **Output PNG frames:** `{campaign_title}_frame_####.png`
+- **`.blend1` files:** Blender's automatic backup files (generated on every `.blend` save)
 
 ## Testing
 
-There is no automated test suite. Manual testing is done by POSTing JSON to `http://localhost:5000/api/render` and inspecting the generated `output_*.blend` file. The `payload.json` and `payload_dynamic.json` files in the root are minimal test payloads. The many `payload_*.json` files with descriptive names (e.g. `payload_eco-friendly-packaging.json`) are production payloads that map to their corresponding `output_*.blend` files.
+There is no automated test suite. Manual testing approaches:
+- **Direct Blender test:** `blender.exe --background --python test_blender.py -- payload.json` — inspects console output and checks for generated PNG frames and `.blend` file
+- **HTTP server test:** `curl -X POST http://localhost:5000/api/render -H "Content-Type: application/json" -d @payload.json`
+- **Full pipeline test:** Run `test_hotel_organic.py` (requires Postgres ledger accessible via Tailscale)
+- `payload.json` in the root is a minimal test payload with 7 empty timeline scenes and earth-tone color scheme
+- The many `payload_*.json` files with descriptive slugs (e.g. `payload_eco-friendly-packaging.json`) are production payloads paired with corresponding `output_*.blend` files
+
+## Operational notes
+
+- `curlinsever.txt` contains operational scratchpad data (bearer tokens, cloudflared tunnel setup, Tailscale networking commands). Not documentation — don't commit secrets from it.
+- The `.blend` output path is hardcoded in `test_blender.py` line 87. If the working directory changes, update this.
+- Claude Code permissions are configured in `.claude/settings.local.json`.
+- The `.gitignore` excludes: `*.blend1`, `output_*.blend`, `__pycache__/`, `server.pid`, `curlinsever.txt`, `test_output.blend`, and `.claude/`.
