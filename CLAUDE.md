@@ -10,15 +10,20 @@ There are **two versions of the Blender scene generator**, and the repo supports
 
 ## Architecture
 
-### Production pipeline (three tiers)
+### Production pipeline (three tiers with post-render hook)
 
 ```
 n8n / external system
   │  POST to port 42617
   ▼
 autonomous_director.py   (port 42617 — AutonomousOrchestrator)
-  │  Sanitizes payload (strips leading `=` from descriptions, ensures sessionId)
-  │  Forwards to port 5000
+  │  ├─ Sanitizes payload
+  │  ├─ Forwards to port 5000 → returns 200 immediately
+  │  └─ Background hook (daemon thread):
+  │       ├─ Phase 1: Poll output dir for frame completion
+  │       ├─ Phase 2: Verify frame integrity (count, size, zero-byte)
+  │       ├─ Phase 3: VLC playback verification
+  │       └─ Phase 4: Shopify staging (hidden)
   ▼
 listen_blender.py        (port 5000 — HTTP server + sequential job queue)
   │  Saves payload → payload_{uniqueId}.json
@@ -48,11 +53,34 @@ Bypassing the autonomous director is fine for local testing — send directly to
 - Session IDs are sanitized to `[a-zA-Z0-9_-]`; fallback is `"campaign_asset"` if sanitization yields an empty string.
 - Each Blender subprocess has a 300-second timeout.
 
-### `autonomous_director.py` — Pre-processing proxy (port 42617)
-- Sits **in front of** `listen_blender.py`. External systems POST here instead of directly to port 5000.
-- Sanitizes payloads before forwarding: strips leading `=` characters from `video_timeline[].description` fields (fixes upstream formatting artifacts), ensures `sessionId` is populated (falls back to `payload.id` or `"autonomous_organic_generation"`).
-- Forwards cleaned payload via `requests.post` to `http://127.0.0.1:5000/api/render` and returns the blended response.
-- Must be running **before** `listen_blender.py` for the production pipeline to work end-to-end.
+### `autonomous_director.py` — Full-cycle orchestrator (port 42617)
+
+Sits **in front of** `listen_blender.py`. External systems POST here instead of directly to port 5000. Now a full-cycle orchestrator — not just a proxy.
+
+**Request flow (synchronous, returns immediately):**
+1. Sanitizes payload (strips leading `=` from `video_timeline[].description`, ensures `sessionId`)
+2. Forwards to `listen_blender.py` on port 5000
+3. Returns `{"status": "queued", "id": "<queueId>", "hook_active": true}`
+
+**Post-render hook (asynchronous, daemon thread):**
+
+| Phase | Action | Timeout |
+|---|---|---|
+| 1. Poll | Watch `{campaign_title}_frame_*.png` count until `frame_end - frame_start + 1` reached | 900s |
+| 2. Verify | Check file count, total bytes, zero-byte detection | — |
+| 3. VLC | `vlc_status()`, play first frame, queue full sequence, pause for review | — |
+| 4. Shopify | POST to `/api/publish_auto` with `status: hidden` | 10s |
+
+**Environment variables:**
+
+| Variable | Default | Purpose |
+|---|---|---|
+| `DIRECTOR_PORT` | `42617` | Listening port |
+| `DIRECTOR_POLL_INTERVAL` | `5.0` | Seconds between frame-count checks |
+| `DIRECTOR_POLL_TIMEOUT` | `900.0` | Max seconds to wait for render |
+| `VLC_HOST` / `VLC_PORT` / `VLC_PASS` | `localhost:8080` / `""` | VLC HTTP interface |
+| `SHOPIFY_PUBLISH_URL` | `100.104.14.63:3002/api/publish_auto` | Shopify buffer endpoint |
+| `RENDER_OUTPUT_DIR` | `C:\Users\Public\...` | Directory scanned for frames |
 
 ### `test_blender.py` — Dynamic scene generator (all properties from payload)
 
