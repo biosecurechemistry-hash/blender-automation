@@ -1,0 +1,32 @@
+{
+  "db_id": 34518,
+  "session_id": "rss_1779548418377_29",
+  "title": "Relax after a stressfull shopping spree with Dead Sea Salt Bath Soak.",
+  "product": "Soothing Bath Soak - Pure Dead Sea Mineral Bath Salt 800g",
+  "slug": "dead-sea-salt-bath-soak-relaxation",
+  "campaign_title": "Dead_Sea_Salt_Bath_Soak",
+  "blender_queue_id": "dynamic_1783247138962",
+  "source": "n8n_webhook",
+  "status_policy": "hidden",
+  "original_db_status": "processing",
+  "decision": "GOLD",
+  "staged_at": "2026-07-05T11:20:00Z",
+  "blockers": [
+    "shopify-publish service (172.17.0.1:3002) DOWN",
+    "tailscale link to postgres (100.104.14.63:5433) DROPPED"
+  ],
+  "seo_blog": {
+    "meta_title": "Relax After a Stressful Shopping Spree with Dead Sea Salt Bath Soak",
+    "meta_description": "Soothe tired muscles and winter-stressed skin with our Pure Dead Sea Mineral Bath Salt 800g. Rich in magnesium, potassium, and calcium for the ultimate self-care ritual.",
+    "h1": "Soothe Your Soul: The Ultimate Dead Sea Salt Bath Experience",
+    "key_points": [
+      "Magnesium eases muscle tension and promotes deep sleep",
+      "Potassium balances skin hydration and reduces inflammation",
+      "Calcium strengthens the skin barrier and smooths texture",
+      "Perfect for last-minute gifts, eczema-prone skin, and winter self-care"
+    ],
+    "hashtags": ["#DeadSea", "#BathSoak", "#SelfCare", "#LastMinuteGifts", "#EczemaRelief", "#OrganicSkincare"],
+    "cta": "Shop Soothing Bath Soak — Pure Dead Sea Mineral Bath Salt 800g",
+    "body_template": "staged_blog_34518.md"
+  }
+}
