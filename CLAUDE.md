@@ -54,18 +54,63 @@ Bypassing the autonomous director is fine for local testing — send directly to
 - Forwards cleaned payload via `requests.post` to `http://127.0.0.1:5000/api/render` and returns the blended response.
 - Must be running **before** `listen_blender.py` for the production pipeline to work end-to-end.
 
-### `test_blender.py` — Molecular cluster scene generator (current/active)
-- **Current payload schema:** reads `campaign_title` (default `"Dynamic_Asset"`) and `prompt_brief` (default `""`) from the JSON payload file. Does NOT use `shopify_handle`, `tailwind_css_theme`, or `video_timeline`.
-- Clears all default objects and materials, then builds a procedural twisting molecular structure:
-  - A `PLAIN_AXES` empty anchor named `Cluster_{campaign_title}`
-  - 12 child ico-spheres (subdivisions 3, radius 0.45) arranged in a 1.5-rotation helix along the Z axis
-  - Chrome material (fully metallic, mirror finish) applied to all child elements
-  - Sun key light + blue area fill light for dual-toned shadow bands
-  - Cinematic camera (100mm macro lens, f/0.2 depth of field, damped-track constraint on the cluster)
-  - 120-frame animation
-- **Renders** all 120 frames as PNGs to `C:\Users\Public\Documents\BlenderAutomationOutputs\{campaign_title}_frame_####.png`
-- Saves the master `.blend` as `output_{campaign_title}.blend`
-- Hardcoded output path: `C:\Users\Public\Documents\BlenderAutomationOutputs\` — changing the working directory requires updating this path in the script.
+### `test_blender.py` — Dynamic scene generator (all properties from payload)
+
+All scene properties are driven by the JSON payload. Every field is optional with sensible defaults — existing `{campaign_title, prompt_brief}`-only payloads continue to work unchanged.
+
+**Payload schema (all fields optional):**
+
+| Field | Default | Description |
+|---|---|---|
+| `campaign_title` | `"Dynamic_Asset"` | Prefix for output filenames |
+| `prompt_brief` | `""` | Logged to Blender stdout for traceability |
+| `geometry` | `"helix"` | Shape preset: `helix`, `grid`, `sphere`, `ring` |
+| `material` | `"chrome"` | Material preset: `chrome`, `matte`, `glass`, `emissive`, `gold` |
+| `lighting` | `"studio"` | Light rig preset: `studio`, `warm`, `dramatic`, `soft` |
+| `frame_start` | `1` | First animation frame |
+| `frame_end` | `120` | Last animation frame |
+| `fps` | `24` | Frames per second |
+| `camera_lens` | `100` | Focal length in mm |
+| `camera_fstop` | `0.2` | Depth of field aperture |
+| `camera_distance` | `9.0` | Camera Z-distance from origin |
+| `camera_height` | `2.0` | Camera elevation |
+| `resolution_x` | `1920` | Render width |
+| `resolution_y` | `1080` | Render height |
+| `resolution_percentage` | `100` | Render scale % |
+| `color_primary` | `null` | RGBA tuple to override material base color |
+| `elements_count` | `12` | Number of elements (helix/grid/sphere) |
+| `cluster_radius` | `1.8` | Radial spread of elements |
+| `element_radius` | `0.45` | Size of each element |
+| `subdivisions` | `3` | Ico-sphere detail level |
+| `rotations` | `1.5` | (helix only) Number of full twists |
+| `z_height` | `4.0` | (helix only) Vertical climb |
+| `grid_spacing` | `1.5` | (grid only) Cell spacing |
+| `element_size` | `0.6` | (grid only) Cube size |
+| `rings` | `3` | (ring only) Number of rings |
+| `elements_per_ring` | `12` | (ring only) Elements per ring |
+| `ring_spacing` | `1.8` | (ring only) Vertical gap between rings |
+| `output_dir` | `C:\Users\Public\...` | Output directory for frames and .blend |
+| `render_animation` | `true` | Set `false` to skip PNG frame rendering |
+| `save_blend` | `true` | Set `false` to skip .blend save |
+
+**Geometry presets:**
+- **helix** — twisting chain of ico-spheres climbing the Z axis
+- **grid** — flat array of cubes for product-grid visuals
+- **sphere** — Fibonacci-sphere distribution for molecular/particle looks
+- **ring** — concentric rings at varying heights for orbital/product-line layouts
+
+**Material presets:**
+- **chrome** — fully metallic, mirror finish (roughness 0.05)
+- **matte** — non-metallic, soft diffuse (roughness 0.7)
+- **glass** — full transmission, IOR 1.45
+- **emissive** — warm orange self-illumination, strength 2.0
+- **gold** — metallic warm gold (roughness 0.1)
+
+**Lighting presets:**
+- **studio** — neutral sun + blue fill (default)
+- **warm** — stronger sun + warm orange fill
+- **dramatic** — very strong key, minimal fill for high contrast
+- **soft** — low sun + strong cool fill for product shots
 
 ### `test_blender2.py` — Identical to `test_blender.py`
 - Byte-for-byte identical copy of `test_blender.py`. Both build the same molecular cluster scene. If one is modified, the other should be updated or removed to avoid confusion.
