@@ -4,6 +4,21 @@
 # Generated output files
 output_*.blend
 
+# Render frame output (PNG sequences)
+*_frame_*.png
+frame_*.png
+
+# Test/dynamic payload artifacts
+payload_[0-9].json
+payload_????????-????-????-????-????????????.json
+payload_dynamic_*.json
+
+# Production blog-post payloads (auto-generated, not source)
+payload_*-*.json
+payload_*-*-*.json
+payload_free_sandbox_test.json
+payload_kali_test_campaign.json
+
 # Python cache
 __pycache__/
 *.pyc

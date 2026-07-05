@@ -1,7 +1,20 @@
 {
-  "id": 6,
-  "title": "Lamp File: image.png",
-  "mesh_type": "cube",
-  "search_context": "No external web context found."
-}ound."
+  "shopify_handle": "test-run",
+  "tailwind_css_theme": {
+    "color_scheme": [
+      "#E07A5F",
+      "#3D405B"
+    ]
+  },
+  "video_timeline": [
+    {
+      "description": "Himalayan salt crystal bath"
+    },
+    {
+      "description": "organic rose petals"
+    },
+    {
+      "description": "plain product"
+    }
+  ]
 }
