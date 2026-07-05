@@ -28,5 +28,10 @@ server.pid
 curlinsever.txt
 test_output.blend
 
+# Deployment artifacts (auto-generated)
+*.b64
+*.tar.gz
+Director-Server.tar.gz
+
 # Claude Code
 .claude/
