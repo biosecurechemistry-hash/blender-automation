@@ -56,6 +56,31 @@ QWEN_MODEL = os.path.join(OGA_MODELS_DIR, "Qwen3-4B-Instruct-2507-UD-Q4_K_XL.ggu
 SD_MODEL = os.path.join(OGA_MODELS_DIR, "ae.safetensors")
 
 # ---------------------------------------------------------------------------
+# Campaign subfolder routing
+# ---------------------------------------------------------------------------
+def campaign_output_path(campaign_id: str | None, subfolder: str,
+                          fallback_root: str | None = None) -> str:
+    """Resolve a subfolder path inside a campaign directory.
+
+    If campaign_id is provided, assets land in::
+
+        {OUTPUT_DIR}/campaign_{campaign_id}/{subfolder}/
+
+    Otherwise they go to *fallback_root* (the flat root OUTPUT_DIR) so
+    existing callers without a campaign_id continue to work.
+
+    The returned directory is created if it doesn't already exist.
+    """
+    root = fallback_root or OUTPUT_DIR
+    if campaign_id:
+        dest = os.path.join(OUTPUT_DIR, f"campaign_{campaign_id}", subfolder)
+    else:
+        dest = root  # backward-compatible flat output
+    os.makedirs(dest, exist_ok=True)
+    return dest
+
+
+# ---------------------------------------------------------------------------
 # MCP stdio transport helpers
 # ---------------------------------------------------------------------------
 def send_jsonrpc(data: dict):
@@ -338,11 +363,15 @@ print("[MCP_SCENE_INFO_END]")
 # Tool: generate_image  (Open-Generative-AI — Stable Diffusion)
 # ---------------------------------------------------------------------------
 def generate_image(prompt: str, output_path: str = "", steps: int = 20,
-                   width: int = 512, height: int = 512) -> dict:
+                   width: int = 512, height: int = 512,
+                   campaign_id: str = "") -> dict:
     """Generate an image via the local Stable Diffusion CLI (sd-cli.exe).
 
     Uses the Qwen 3 4B Instruct GGUF model as the text encoder and the
     bundled ae.safetensors autoencoder for decoding.
+
+    When *campaign_id* is provided, the image is saved into
+    ``campaign_<id>/_images/`` instead of the flat OUTPUT_DIR root.
     """
     if not os.path.exists(SD_CLI_EXE):
         return {"success": False,
@@ -354,7 +383,9 @@ def generate_image(prompt: str, output_path: str = "", steps: int = 20,
 
     if not output_path:
         slug = re.sub(r"[^a-z0-9]+", "_", prompt.lower().strip())[:40]
-        output_path = os.path.join(OUTPUT_DIR, f"sd_{slug}_{int(time.time())}.png")
+        dest_dir = campaign_output_path(campaign_id if campaign_id else None,
+                                         "_images")
+        output_path = os.path.join(dest_dir, f"sd_{slug}_{int(time.time())}.png")
 
     cmd = [
         SD_CLI_EXE,
@@ -424,17 +455,33 @@ def list_assets(source: str = "all") -> dict:
             "files": blob_assets[:50],  # Cap at 50 to avoid flooding
         }
 
-    # Blender render frame outputs
+    # Blender render frame outputs — scan campaign subfolders first,
+    # then fall back to flat root for legacy assets.
     if source in ("all", "renders"):
         render_assets = []
+        scan_roots = []
+
+        # 1. Structured campaign folders (new)
         if os.path.isdir(OUTPUT_DIR):
-            for f in sorted(os.listdir(OUTPUT_DIR)):
+            for entry in sorted(os.listdir(OUTPUT_DIR)):
+                campaign_frames = os.path.join(OUTPUT_DIR, entry, "frames")
+                if entry.startswith("campaign_") and os.path.isdir(campaign_frames):
+                    scan_roots.append(campaign_frames)
+
+        # 2. Flat root (legacy / fallback)
+        scan_roots.append(OUTPUT_DIR)
+
+        for scan_root in scan_roots:
+            if not os.path.isdir(scan_root):
+                continue
+            for f in sorted(os.listdir(scan_root)):
                 if re.search(r"_frame_\d+\.png$", f):
-                    fpath = os.path.join(OUTPUT_DIR, f)
+                    fpath = os.path.join(scan_root, f)
                     try:
                         st = os.stat(fpath)
                         render_assets.append({
                             "name": f,
+                            "path": fpath,
                             "size_bytes": st.st_size,
                             "modified": time.strftime(
                                 "%Y-%m-%d %H:%M:%S",
@@ -442,6 +489,7 @@ def list_assets(source: str = "all") -> dict:
                         })
                     except OSError:
                         pass
+
         # Group by campaign prefix
         campaigns = {}
         for a in render_assets:
@@ -508,17 +556,34 @@ def studio_status() -> dict:
         "total_size_mb": round(blob_size / (1024 * 1024), 1),
     }
 
-    # Blender renders
+    # Blender renders — scan campaign subfolders first, then flat root
     frame_count = 0
     blend_count = 0
+    campaign_count = 0
     if os.path.isdir(OUTPUT_DIR):
+        # Structured campaign folders
+        for entry in os.listdir(OUTPUT_DIR):
+            entry_path = os.path.join(OUTPUT_DIR, entry)
+            if entry.startswith("campaign_") and os.path.isdir(entry_path):
+                campaign_count += 1
+                for root, dirs, files in os.walk(entry_path):
+                    for f in files:
+                        if re.search(r"_frame_\d+\.png$", f):
+                            frame_count += 1
+                        elif f.endswith(".blend"):
+                            blend_count += 1
+        # Legacy flat root files (backward compatible)
         for f in os.listdir(OUTPUT_DIR):
+            fpath = os.path.join(OUTPUT_DIR, f)
+            if not os.path.isfile(fpath):
+                continue
             if re.search(r"_frame_\d+\.png$", f):
                 frame_count += 1
             elif f.endswith(".blend"):
                 blend_count += 1
     status["components"]["blender_outputs"] = {
         "path": OUTPUT_DIR,
+        "campaigns": campaign_count,
         "render_frames": frame_count,
         "blend_files": blend_count,
     }
@@ -544,9 +609,14 @@ def studio_status() -> dict:
 # ---------------------------------------------------------------------------
 def generate_video(prompt: str, frames: int = 24, fps: int = 24,
                    width: int = 512, height: int = 512,
-                   output_path: str = "", seed: int = 42) -> dict:
+                   output_path: str = "", seed: int = 42,
+                   campaign_id: str = "") -> dict:
     """Generate a video via sd-cli.exe vid_gen mode using the local Stable
-    Diffusion engine. Outputs .avi, .webm, or animated .webp."""
+    Diffusion engine. Outputs .avi, .webm, or animated .webp.
+
+    When *campaign_id* is provided, the video is saved into
+    ``campaign_<id>/_video/`` instead of the flat OUTPUT_DIR root.
+    """
     if not os.path.exists(SD_CLI_EXE):
         return {"success": False,
                 "error": f"sd-cli.exe not found at {SD_CLI_EXE}"}
@@ -556,8 +626,10 @@ def generate_video(prompt: str, frames: int = 24, fps: int = 24,
 
     if not output_path:
         slug = re.sub(r"[^a-z0-9]+", "_", prompt.lower().strip())[:30]
+        dest_dir = campaign_output_path(campaign_id if campaign_id else None,
+                                         "_video")
         output_path = os.path.join(
-            OUTPUT_DIR, f"vid_{slug}_{int(time.time())}.webm")
+            dest_dir, f"vid_{slug}_{int(time.time())}.webm")
 
     cmd = [
         SD_CLI_EXE,
@@ -874,6 +946,10 @@ TOOLS = [
                     "type": "integer",
                     "description": "Image height in pixels (default: 512).",
                 },
+                "campaign_id": {
+                    "type": "string",
+                    "description": "Optional campaign ID (e.g. '52580'). When set, the image is routed into campaign_<id>/_images/ instead of the root output directory.",
+                },
             },
             "required": ["prompt"],
         },
@@ -944,6 +1020,10 @@ TOOLS = [
                 "seed": {
                     "type": "integer",
                     "description": "RNG seed (default: 42, random if < 0).",
+                },
+                "campaign_id": {
+                    "type": "string",
+                    "description": "Optional campaign ID (e.g. '52580'). When set, the video is routed into campaign_<id>/_video/ instead of the root output directory.",
                 },
             },
             "required": ["prompt"],
@@ -1043,6 +1123,7 @@ def handle_request(msg: dict):
                 int(arguments.get("steps", 20)),
                 int(arguments.get("width", 512)),
                 int(arguments.get("height", 512)),
+                arguments.get("campaign_id", ""),
             )
         elif tool_name == "list_assets":
             result = list_assets(arguments.get("source", "all"))
@@ -1057,6 +1138,7 @@ def handle_request(msg: dict):
                 int(arguments.get("height", 512)),
                 arguments.get("output_path", ""),
                 int(arguments.get("seed", 42)),
+                arguments.get("campaign_id", ""),
             )
         elif tool_name == "vlc_control":
             result = vlc_control(

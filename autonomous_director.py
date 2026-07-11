@@ -96,18 +96,34 @@ def vlc_pause() -> dict:
 
 
 # ---------------------------------------------------------------------------
+# Output routing helper
+# ---------------------------------------------------------------------------
+def campaign_frames_dir(payload: dict) -> str:
+    """Resolve the frames/ subfolder for a given campaign payload."""
+    campaign_id = payload.get("campaign_id")
+    if campaign_id is None:
+        title = payload.get("campaign_title", "dynamic_asset")
+        campaign_id = re.sub(r"[^a-zA-Z0-9_-]", "_", str(title)).strip("_")[:60]
+    return os.path.join(OUTPUT_DIR, f"campaign_{campaign_id}", "frames")
+
+
+# ---------------------------------------------------------------------------
 # Frame verification
 # ---------------------------------------------------------------------------
-def count_rendered_frames(campaign_title: str) -> int:
-    """Count how many {campaign_title}_frame_*.png files exist."""
-    pattern = os.path.join(OUTPUT_DIR, f"{campaign_title}_frame_*.png")
+def count_rendered_frames(payload: dict) -> int:
+    """Count how many {campaign_title}_frame_*.png files exist in campaign subfolder."""
+    target_dir = campaign_frames_dir(payload)
+    campaign_title = payload.get("campaign_title", "Dynamic_Asset")
+    pattern = os.path.join(target_dir, f"{campaign_title}_frame_*.png")
     return len(glob.glob(pattern))
 
 
-def verify_frame_directory(campaign_title: str,
+def verify_frame_directory(payload: dict,
                            expected_frames: int) -> dict:
     """Check that the expected number of frames exist and are non-empty."""
-    pattern = os.path.join(OUTPUT_DIR, f"{campaign_title}_frame_*.png")
+    target_dir = campaign_frames_dir(payload)
+    campaign_title = payload.get("campaign_title", "Dynamic_Asset")
+    pattern = os.path.join(target_dir, f"{campaign_title}_frame_*.png")
     files = sorted(glob.glob(pattern))
     actual = len(files)
     sizes = []
@@ -194,7 +210,7 @@ def post_render_hook(payload: dict, queue_id: str):
     last_count = 0
     while True:
         elapsed = time.time() - start_time
-        current_count = count_rendered_frames(campaign_title)
+        current_count = count_rendered_frames(payload)
 
         if current_count != last_count:
             print(f"[HOOK:{queue_id}] Frames: {current_count}/{expected_frames}  "
@@ -214,7 +230,7 @@ def post_render_hook(payload: dict, queue_id: str):
         time.sleep(POLL_INTERVAL)
 
     # --- Phase 2: Verify frame integrity ---
-    verify = verify_frame_directory(campaign_title, expected_frames)
+    verify = verify_frame_directory(payload, expected_frames)
     print(f"[HOOK:{queue_id}] Frame verify: {verify['actual_frames']} files, "
           f"{verify['total_size_bytes']} bytes total, "
           f"{verify['zero_byte_files']} zero-byte")
@@ -236,7 +252,7 @@ def post_render_hook(payload: dict, queue_id: str):
                   f"{'OK' if play_result.get('success') else 'FAILED'}")
 
         # Also enqueue the full frame sequence directory for review
-        frame_dir = os.path.join(OUTPUT_DIR, "")
+        frame_dir = campaign_frames_dir(payload)
         vlc_play_file(frame_dir)
         # Pause immediately — the user can press play to review
         time.sleep(1)

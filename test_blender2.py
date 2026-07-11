@@ -3,6 +3,68 @@ import json
 import sys
 import math
 import os
+import re
+import glob
+import shutil
+
+
+# ---------------------------------------------------------------------------
+# Output routing — campaign subfolder isolation
+# ---------------------------------------------------------------------------
+def resolve_campaign_path(cfg):
+    """Build the campaign output directory and ensure it exists.
+
+    Resolves campaign_id from the payload (numeric ID like 52580) or falls
+    back to a sanitised slug of campaign_title.  Creates the folder tree::
+
+        BlenderAutomationOutputs/
+          campaign_52580/          ← all production assets
+            frames/                ← PNG frame sequences (instantly scannable)
+            _blend/                ← .blend + any .blend1 backups (isolated)
+            _audio/                ← generated audio assets
+            _cache/                ← transient files, cleaned post-render
+    """
+    root = cfg.get("output_dir", r"C:\Users\Public\Documents\BlenderAutomationOutputs")
+
+    # 1. Resolve campaign identity
+    campaign_id = cfg.get("campaign_id")
+    if campaign_id is None:
+        # Derive a numeric-ish slug from campaign_title
+        title = cfg.get("campaign_title", "dynamic_asset")
+        slug = re.sub(r"[^a-zA-Z0-9_-]", "_", str(title)).strip("_")[:60]
+        campaign_id = slug
+
+    campaign_dir = os.path.join(root, f"campaign_{campaign_id}")
+
+    # 2. Create the tree
+    frames_dir = os.path.join(campaign_dir, "frames")
+    blend_dir  = os.path.join(campaign_dir, "_blend")
+    audio_dir  = os.path.join(campaign_dir, "_audio")
+    cache_dir  = os.path.join(campaign_dir, "_cache")
+
+    for d in (frames_dir, blend_dir, audio_dir, cache_dir):
+        os.makedirs(d, exist_ok=True)
+
+    print(f"[ROUTE] Campaign output → {campaign_dir}")
+    return campaign_dir, frames_dir, blend_dir, audio_dir, cache_dir
+
+
+def cleanup_backups(campaign_dir: str):
+    """Remove .blend1 and other transient files from the campaign tree.
+
+    Called post-render so the user-facing frames/ directory stays clean.
+    """
+    removed = 0
+    for pattern in ("*.blend1", "*.blend@*", "*.tmp"):
+        for path in glob.glob(os.path.join(campaign_dir, "**", pattern),
+                              recursive=True):
+            try:
+                os.remove(path)
+                removed += 1
+            except OSError:
+                pass
+    if removed:
+        print(f"[CLEAN] Removed {removed} backup/temp files from {campaign_dir}")
 
 
 # ---------------------------------------------------------------------------
@@ -164,12 +226,12 @@ def setup_headless_molecular_scene(cfg):
     camera_fstop = cfg.get("camera_fstop", 0.2)
     resolution_x = cfg.get("resolution_x", 1920)
     resolution_y = cfg.get("resolution_y", 1080)
-    output_dir = cfg.get(
-        "output_dir",
-        r"C:\Users\Public\Documents\BlenderAutomationOutputs",
-    )
     do_render = cfg.get("render_animation", True)
     do_save = cfg.get("save_blend", True)
+
+    # --- campaign subfolder routing ---
+    campaign_dir, frames_dir, blend_dir, audio_dir, cache_dir = \
+        resolve_campaign_path(cfg)
 
     print(f"[CONFIG] geometry={geo_type}  material={material_name}"
           f"  lighting={light_name}  frames={frame_start}-{frame_end}"
@@ -264,23 +326,33 @@ def setup_headless_molecular_scene(cfg):
     scene.render.resolution_y = resolution_y
     scene.render.resolution_percentage = cfg.get("resolution_percentage", 100)
     scene.render.fps = cfg.get("fps", 24)
-    scene.render.filepath = os.path.join(output_dir, f"{campaign_title}_frame_")
+    # Route render frames into campaign_<id>/frames/
+    scene.render.filepath = os.path.join(frames_dir, f"{campaign_title}_frame_")
     scene.render.image_settings.file_format = 'PNG'
+
+    # Suppress automatic .blend1 backup generation during automated renders
+    prefs = bpy.context.preferences
+    if hasattr(prefs.filepaths, "save_version"):
+        prefs.filepaths.save_version = 0  # 0 = no .blend1 backups
 
     print(f"[SCENE] {frame_start}-{frame_end} @ {scene.render.fps}fps  "
           f"{resolution_x}x{resolution_y} @ {scene.render.resolution_percentage}%")
 
     # 8. Render (optional — skip for scene-info-only mode)
     if do_render:
-        print(f"[DISK] Baking {frame_end - frame_start + 1} frames for {campaign_title}...")
+        frame_count = frame_end - frame_start + 1
+        print(f"[DISK] Baking {frame_count} frames → {frames_dir}")
         bpy.ops.render.render(animation=True)
-        print(f"[DISK] Rendered {frame_end - frame_start + 1} frames")
+        print(f"[DISK] Rendered {frame_count} frames to frames/")
 
-    # 9. Save .blend (optional)
+    # 9. Save .blend (optional) — isolated in _blend/ subfolder
     if do_save:
-        output_path = os.path.join(output_dir, f"output_{campaign_title}.blend")
+        output_path = os.path.join(blend_dir, f"output_{campaign_title}.blend")
         bpy.ops.wm.save_as_mainfile(filepath=output_path)
         print(f"[DISK] Saved master layout to: {output_path}")
+
+    # 10. Post-render housekeeping
+    cleanup_backups(campaign_dir)
 
     print(f"[SUCCESS] Scene built for campaign: {campaign_title}")
 
