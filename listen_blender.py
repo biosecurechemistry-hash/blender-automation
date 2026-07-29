@@ -3,7 +3,7 @@
 queues them, and spawns Blender headlessly to generate .blend scene files.
 
 Usage: python3 listen_blender.py
-Environment: BLENDER_EXE  — path to Blender executable (default: "blender")
+Environment: BLENDER_EXE = os.environ.get("BLENDER_EXE", r"C:\Program Files\Blender Foundation\Blender 5.1\blender.exe")
              BLENDER_PORT — TCP port to listen on (default: 5000)
 """
 

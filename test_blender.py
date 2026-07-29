@@ -251,6 +251,14 @@ def setup_headless_molecular_scene(cfg):
     molecule_target = bpy.context.active_object
     molecule_target.name = f"Cluster_{campaign_title}"
 
+ # Force Cycles engine for high-quality rendering
+    scene = bpy.context.scene
+    scene.render.engine = 'CYCLES'
+    scene.cycles.device = 'GPU' 
+    scene.cycles.samples = 128    # Increase this to 256 or 512 for "pro" quality
+    scene.cycles.use_denoising = True
+    scene.render.film_transparent = False # Ensure we have a solid background
+
     # 3. Build geometry
     builder = GEOMETRY_BUILDERS.get(geo_type, build_helix)
     builder(molecule_target, cfg)
@@ -284,6 +292,16 @@ def setup_headless_molecular_scene(cfg):
     for child in molecule_target.children:
         child.data.materials.append(mat)
     print(f"[MAT] Applied material preset: {material_name}")
+
+ # Use Environment Texture for realistic reflections
+    bg_nodes = bpy.context.scene.world.node_tree.nodes
+    bg_nodes.clear()
+    env_node = bg_nodes.new('ShaderNodeTexEnvironment')
+    # Point this to an HDRI file on your disk
+    env_node.image = bpy.data.images.load(r"C:\Users\Public\Documents\BlenderAutomationOutputs\studio.exr")
+    out_node = bg_nodes.new('ShaderNodeOutputWorld')
+    bg_nodes.new('ShaderNodeBackground') # Add this if not using env_node directly
+    bpy.context.scene.world.node_tree.links.new(env_node.outputs['Color'], out_node.inputs['Surface'])
 
     # 5. Lights
     light_preset = LIGHT_PRESETS.get(light_name, LIGHT_PRESETS["studio"])
@@ -337,6 +355,24 @@ def setup_headless_molecular_scene(cfg):
 
     print(f"[SCENE] {frame_start}-{frame_end} @ {scene.render.fps}fps  "
           f"{resolution_x}x{resolution_y} @ {scene.render.resolution_percentage}%")
+
+ #  # 7.5 Animation: Rotate the cluster
+    molecule_target.rotation_mode = 'XYZ'
+    
+    # Start: 0 degrees
+    molecule_target.rotation_euler = (0, 0, 0)
+    molecule_target.keyframe_insert(data_path="rotation_euler", frame=frame_start)
+    
+    # End: 360 degrees (in radians)
+    molecule_target.rotation_euler = (0, 0, math.radians(360))
+    molecule_target.keyframe_insert(data_path="rotation_euler", frame=frame_end)
+    
+    # Make the motion smooth (Linear)
+    for fcurve in molecule_target.animation_data.action.fcurves:
+        for kp in fcurve.keyframe_points:
+            kp.interpolation = 'LINEAR'
+    
+    print(f"[ANIM] Added 360-degree rotation across {frame_end - frame_start} frames")
 
     # 8. Render (optional — skip for scene-info-only mode)
     if do_render:
