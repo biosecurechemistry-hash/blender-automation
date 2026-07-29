@@ -35,3 +35,49 @@ Director-Server.tar.gz
 
 # Claude Code
 .claude/
+
+# Node.js (Director-Server)
+Director-Server/node_modules/
+Director-Server/package-lock.json
+
+# Temp / scratch directories
+.tmp.driveupload/
+
+# Logs
+*.log
+
+# Campaign output directories (rendered frames, .blend, audio, video, models, exports)
+campaign_*/
+campaign_payloads/
+
+# Inhaler pipeline scripts (manual/offline workflow — hardcoded paths, not part of core pipeline)
+animate_inhaler.py
+cleanup_depth_scan.py
+compile_h264.py
+fix_and_render_pipe.py
+fix_imagetostl_render.py
+mcp_scene_setup.py
+pipeline_2d5_to_3d.py
+reconstruct_cylindrical.py
+reconstruct_v2.py
+render_cleaned_turntable.py
+render_inhaler.py
+render_inhaler_v2.py
+save_blend_scene.py
+organize.py
+
+# Generated .blend and preview images
+mcp_scene.blend
+mcp_scene_preview.png
+
+# Test payload artifacts
+payload_test_render_*.json
+
+# Separate sub-projects (not integrated into core pipeline)
+2Dti3D/
+Modly/
+Production_last_chance/
+
+# Director-Server misc
+Director-Server/.railwayignore
+Director-Server/start_wan.bat
