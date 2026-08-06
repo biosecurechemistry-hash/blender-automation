@@ -66,16 +66,55 @@ Director-Server/          (self-contained Next.js project, isolated from broken 
   │  NOTE: npm scripts (dev/start/build) run test_ledger.js or no-op — the Next.js
   │        dev server is NOT started by any script; pages exist but are not currently served.
   │  lib/db.js            — PostgreSQL connection pool for director_ledger :5433
-  │  pages/index.js       — Dashboard UI: ledger, Blender bridge, Open WebUI, ZeroClaw, Ghostfolio, Shopify
-  │  pages/agent/index.js — ZeroClaw Agent dashboard (agent status, pipeline status, command queue)
+  │  pages/index.js       — Dashboard UI: ledger, Blender bridge, Open WebUI, ZeroClaw,
+  │                         Ghostfolio, Shopify cards. Displays "molecular_sweep.py" as the
+  │                         Blender script label, but the actual pipeline uses test_blender.py.
+  │  pages/agent/index.js — ZeroClaw Agent dashboard (Inquisitor/Scout status, pipeline health,
+  │                         command queue)
   │  pages/api/ledger-summary.js — GET endpoint returning pending/total/table counts
   │  test_ledger.js       — Direct PG connection test (connect, list tables, count rows/services)
   │  next.config.js       — Island-strategy Webpack config: resolves ONLY from local node_modules,
   │                         blocks monorepo workspace symlinks, aliases React to single instance
+  │  generate_logo_scene.py — Blender Python script: imports logo SVGs from 2Dti3D/Logo/,
+  │                         builds extruded/beveled 3D logo curves with gold material,
+  │                         adds "Au"/"S" matrix cube tiles, sets up lighting + camera.
+  │                         Scene setup only (no render call). Run via:
+  │                         blender.exe --background --python Director-Server/generate_logo_scene.py
   │  start_wan.bat        — Wan2GP launcher (external tool, not part of core pipeline)
-  │  listen_blender.py     — Separate "Kali Linux Island Edition" variant (259 lines vs 176 in root);
+  │  listen_blender.py    — Separate "Kali Linux Island Edition" variant (259 lines vs 176 in root);
   │                         different docstring but same core HTTP→Blender spawn logic
+  │
+  │  Deployment files:
+  │  Production.Dockerfile — node:20-slim + Python build tools, exposes 3002.
+  │                          ⚠️ Stale: CMD runs "pure-backend.js" which does not exist.
+  │  SETUP.sh              — Kali Linux island-setup script: purges monorepo symlinks,
+  │                          npm install --no-workspaces, starts Postgres Docker container
+  │                          (port 5433:5432), runs test_ledger.js, starts Next.js on port 8081.
+  │                          Contains hardcoded Postgres credentials matching lib/db.js.
+  │  .railwayignore        — Ignores node_modules, .next, .git, *.png, *.blend, *.blend1.
+  │  railway.json          — REMOVED (was used for Railway/Nixpacks deploys; no longer needed).
 ```
+
+**npm scripts (from package.json):**
+
+```bash
+npm run dev           # Runs node test_ledger.js (NOT the Next.js dev server)
+npm run build         # No-op: echoes "Bypassing Next.js frontend compilation"
+npm start             # Runs node test_ledger.js
+npm run test:ledger   # Direct PG connection test via test_ledger.js
+npm run test:blender  # Smoke test: curls port 5000 with 320×180 2-frame payload
+```
+
+**next.config.js island strategy:**
+- `resolve.modules`: forced to `Director-Server/node_modules` only — never looks up at parent
+- `resolve.symlinks`: `false` — blocks broken monorepo workspace symlinks
+- React singleton: aliases `react` and `react-dom` to local copies to prevent duplicate React errors
+- Server externals: `pg`, `pg-native`, `dns`, `net`, `tls`, `fs` are never bundled
+- Watch ignore: parent `packages/`, `node_modules/`, `.git/` excluded from file watching
+- Browser env vars (with defaults):
+  - `NEXT_PUBLIC_OPEN_WEBUI_URL` → `http://127.0.0.1:3333`
+  - `NEXT_PUBLIC_ZEROCLAW_URL` → `http://127.0.0.1:42617/agent`
+  - `NEXT_PUBLIC_BLENDER_API` → `http://127.0.0.1:5000`
 
 ### Video compilation (post-render)
 
@@ -97,6 +136,22 @@ organize.py               — One-shot organizer: sweeps root for payload_*.json
 test_hotel_organic.py     — End-to-end integration test: queries Postgres ledger for "organic"
                             product, builds payload (with intentional leading =), POSTs to
                             autonomous_director on port 42617. Falls back to hardcoded product.
+generate_music.py         — MiniMax Music 3.0 API client: POSTs an instrumental ambient-music
+                            prompt to api.minimax.io/v1/music_generation (model: music-3.0),
+                            prints JSON response with download URL. Hardcoded for the
+                            Himalayan Salt Inhaler / Hotel Organic campaign aesthetic.
+                            ⚠️ Contains a hardcoded API key — extract to env var before reuse.
+```
+
+### Data artifacts (non-code)
+
+```
+Muapi/                    — Scratch directory for Google Ads optimization-score reports
+                            and generated media assets (MP4). Not operational code.
+                            Recommend adding to .gitignore.
+staged_dashboard_34518.json — Staging-dashboard snapshot for GOLD-queued product #34518
+                            (Dead Sea Salt Bath Soak). Contains db_id, session_id,
+                            blender_queue_id, SEO blog template, and deployment blockers.
 ```
 
 ## Campaign subfolder output structure
@@ -277,12 +332,15 @@ Unlike the automated JSON→render pipeline, the inhaler workflow is a set of st
   - `modly_mcp_bridge.py` — A separate stdio MCP server (register with `claude mcp add modly`) that connects to Ollama (`qwen2.5-coder:3b`) for AI-assisted 3D mesh code generation, executes trimesh scripts, exports OBJ/GLB/STL, and scans workspace assets
   - `generate_inhaler.py` — Procedural trimesh generator for the Himalayan Salt Inhaler product (real-world dimensions, salt crystal geometry)
 - `Experiment/` contains OBJ meshes from pipe scans and Google Drive imports
-- `workspace/` contains reference images, generated meshes, and `_generated_mesh.py` scripts
+- `workspace/` contains reference images, generated meshes, `_generated_mesh.py` scripts, and ComfyUI workflow JSON files
+- `workflows/` contains ComfyUI workflow JSON files (~657 KB) referencing images in `workspace/` for AI image generation
+- `extensions/` and `models/` are empty (placeholders)
 
 ### `2Dti3D/` — Texture-manifest batch rendering (separate automation flow)
 - `automation_script.py` — Blender Python script that loads a `textureManifest.js` file (product name + image URL pairs scraped from Shopify), iterates through products, and renders each in Blender
 - `textureManifest.js` — Auto-generated manifest of ~49+ products with Shopify CDN image URLs
 - `Renders/` — Thousands of rendered PNG frames from batch product renders
+- `Logo/` — Hotel Organic brand logo source files (`logoHO.svg`, `logoHO.png`, `logoHO_transparent.png`, `fav_h_o.svg`, `fav_h_o.png`). Input source for `Director-Server/generate_logo_scene.py`.
 
 ### `Production_last_chance/` — Database dump snapshots
 - Contains 56+ JSON files dumped from the `director_ledger` Postgres database (rows from `director_ledger`, `scene_compositions`, `orchestration_jobs`, `production_assets`, `service_registry`, etc.)
@@ -345,6 +403,7 @@ On Unix, set `BLENDER_EXE` to the correct path before starting `listen_blender.p
 There is no automated test suite. Manual testing approaches:
 - **Direct Blender test:** `blender.exe --background --python test_blender.py -- payload.json` — inspects console output and checks for generated PNG frames and `.blend` file
 - **HTTP server test:** `curl -X POST http://localhost:5000/api/render -H "Content-Type: application/json" -d @payload.json`
+- **Smoke test (fast):** `npm run test:blender` (in Director-Server/) — POSTs a minimal 320×180, 2-frame payload to port 5000; quick pipeline verification without rendering full-HD frames
 - **Full pipeline test:** Run `test_hotel_organic.py` (requires Postgres ledger accessible via Tailscale)
 - **MCP bridge test:** The MCP bridge is tested implicitly through Claude Code tool invocations
 - **Director-Server DB test:** `cd Director-Server && node test_ledger.js`
@@ -357,5 +416,6 @@ There is no automated test suite. Manual testing approaches:
 - **HDRI dependency:** `test_blender.py` loads `studio.exr` from `C:\Users\Public\Documents\BlenderAutomationOutputs\studio.exr` for environment lighting. This file is **not in the repository** — it must be provided externally. If missing, Blender still renders but without environment reflections (the world shader node setup will fail silently). `test_blender2.py` does not require this file (it omits HDRI entirely).
 - **GPU rendering:** `test_blender.py` forces `scene.cycles.device = 'GPU'`. If no compatible GPU is available, Blender will fall back to CPU silently.
 - Claude Code permissions are configured in `.claude/settings.local.json`.
-- The `.gitignore` excludes: `*.blend1`, `output_*.blend`, `*_frame_*.png`, `payload_dynamic_*.json`, `__pycache__/`, `server.pid`, `curlinsever.txt`, `test_output.blend`, `.b64`/`.tar.gz` deployment artifacts, and `.claude/`.
+- The `.gitignore` excludes: `*.blend1`, `output_*.blend`, `*_frame_*.png`, `payload_dynamic_*.json`, `__pycache__/`, `server.pid`, `curlinsever.txt`, `test_output.blend`, `.b64`/`.tar.gz` deployment artifacts, `.tmp.driveupload/`, and `.claude/`.
+- `.tmp.drivedownload/` and `Muapi/` are **not** yet in `.gitignore` — consider adding them (Google Drive sync temp dir and marketing data scratch dir, respectively).
 - The Director-Server is an "island strategy" project — its Webpack config explicitly blocks resolution from the parent monorepo and forces all dependencies from its local `node_modules/`.
