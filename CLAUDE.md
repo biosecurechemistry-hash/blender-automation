@@ -122,7 +122,10 @@ npm run test:blender  # Smoke test: curls port 5000 with 320×180 2-frame payloa
 compile_video.py          — Blender VSE script: imports PNG sequence + WAV voiceover,
                             renders H.264 MP4 via FFmpeg (campaign 52580 hardcoded)
 compile_final.py          — Standalone Python: PIL converts PNG frames to raw RGB24 temp file,
-                            ffmpeg compiles with libopenh264 + AAC (avoids pipe deadlock)
+                            ffmpeg compiles with libopenh264 + AAC (avoids pipe deadlock).
+                            ⚠️ Uses `C:\Program Files\BlueStacks_nxt\ffmpeg.exe` —
+                            FFmpeg bundled with the BlueStacks Android emulator.
+                            Campaign 52580 hardcoded.
 ```
 
 ### Utility scripts
@@ -141,6 +144,11 @@ generate_music.py         — MiniMax Music 3.0 API client: POSTs an instrumenta
                             prints JSON response with download URL. Hardcoded for the
                             Himalayan Salt Inhaler / Hotel Organic campaign aesthetic.
                             ⚠️ Contains a hardcoded API key — extract to env var before reuse.
+process_horizon_campaign.py — Batch processor: scans product cutout images from
+                            ~/Downloads/horizon_raw_cutouts/, builds Flux AI prompt
+                            configurations per product category (skincare, salt lamps,
+                            bath salts, gift sets), writes campaign_horizon.json payload.
+                            Hardcoded paths to Downloads — not portable. Not integrated.
 ```
 
 ### Data artifacts (non-code)
@@ -152,6 +160,7 @@ Muapi/                    — Scratch directory for Google Ads optimization-scor
 staged_dashboard_34518.json — Staging-dashboard snapshot for GOLD-queued product #34518
                             (Dead Sea Salt Bath Soak). Contains db_id, session_id,
                             blender_queue_id, SEO blog template, and deployment blockers.
+gguf_test_payload.json    — Test payload for GGUF-format model inference. Untracked.
 ```
 
 ## Campaign subfolder output structure
@@ -179,7 +188,15 @@ Legacy files in the flat root directory still work — the pipeline scans both n
 
 ## Campaign payload storage
 
-`campaign_payloads/` organizes JSON payloads by campaign name slug. Each campaign has its own subdirectory (e.g., `campaign_payloads/eco-friendly-packaging/payload_eco-friendly-packaging.json`). The `campaign_payloads/dynamic/` subdirectory holds auto-generated test payloads with epoch timestamps.
+`campaign_payloads/` organizes JSON payloads by campaign name slug. Each campaign has its own subdirectory (e.g., `campaign_payloads/eco-friendly-packaging/payload_eco-friendly-packaging.json`). The directory also contains:
+
+- `campaign_0` through `campaign_48` — Numerically-keyed campaign payload directories (~49 auto-generated campaign directories)
+- `dynamic/` — Auto-generated test payloads with epoch timestamps
+- `generated_assets/` — Asset manifest directory
+- `pipeline_manifest.json` — Pipeline metadata for batch operations
+- ~50+ named slug directories for production campaigns (e.g., `hotel-organic-argan-rosemary-hair-oil-brings-hair-back-to-life`)
+
+The root `blender_projects/` directory contains 60+ directories mixing UUIDs (like `01cbfdfa-790b-f9f7-0311-a0b2bad317b0`), numeric IDs (`1`–`5`), and campaign slug names — these hold exported `.blend` files from past renders.
 
 ## Source files
 
@@ -238,6 +255,34 @@ A JSON-RPC server that communicates over stdin/stdout using the Model Context Pr
 **Integration tools:**
 - `vlc_control` — Full VLC Lua HTTP interface: status, play, pause, stop, next, prev, fullscreen, play_file (with directory-of-frames support for frame-by-frame review), seek, volume, loop
 - `remote_services` — Health check for kaliko-hosted services via Tailscale: Open WebUI (3335), Ghostfolio (3334), shopify-publish (3002), blender-api (3006), director-mcp (8000), Postgres (5433)
+
+### `comfy_mcp_bridge.py` — ComfyUI + OGA MCP stdio server
+
+A JSON-RPC server that communicates over stdin/stdout using the Model Context Protocol. Run with **Python 3.11** (NOT Blender's bundled Python). Registered with Claude Code via `claude mcp add comfy --transport stdio`. Exposes 10 tools across three domains:
+
+**ComfyUI tools:**
+- `comfyui_prompt` — POST a workflow JSON to `/prompt`, returns `prompt_id`
+- `comfyui_status` — GET `/system_stats` + `/queue` combined
+- `comfyui_history` — GET `/history[/{prompt_id}]` with optional progress polling
+- `comfyui_models` — GET `/models[/{folder}]` — list checkpoints, loras, VAE, etc.
+- `comfyui_object_info` — GET `/object_info` — node type catalogue
+
+**Open-Generative-AI tools (sd-cli.exe):**
+- `oga_generate_image` — Run sd-cli.exe `-M img_gen`, auto-route output to ComfyUI input
+- `oga_generate_video` — Run sd-cli.exe `-M vid_gen`
+- `oga_list_models` — List contents of `open-generative-ai/local-ai/models/`
+- `oga_model_info` — Inspect a single `.safetensors` / `.gguf` file (metadata mode)
+
+**Integration tools:**
+- `route_to_comfyui` — Hardlink / copy an OGA output into ComfyUI input folders
+- `studio_status` — Combined health check: ComfyUI liveness, OGA binaries, models, disk
+
+**Registration:**
+```bash
+claude mcp add comfy --transport stdio -- \
+    "C:\Program Files\Python311\python.exe" \
+    "C:\Users\Public\Documents\BlenderAutomationOutputs\comfy_mcp_bridge.py"
+```
 
 ### `test_blender.py` — Dynamic scene generator (all properties from payload)
 
@@ -308,6 +353,8 @@ All scene properties are driven by the JSON payload. Every field is optional wit
 
 Unlike the automated JSON→render pipeline, the inhaler workflow is a set of standalone Blender Python scripts for 2.5D depth-scan→3D reconstruction, mesh cleanup, turntable animation, and video compilation. All paths are hardcoded to `campaign_salt_inhaler/`.
 
+**Note:** All inhaler scripts are listed in `.gitignore` but some still exist on disk from a prior commit — they won't be tracked in future commits. `organize.py` is also gitignored despite being a general utility.
+
 **2.5D Image+Depth → 3D Mesh:**
 - `pipeline_2d5_to_3d.py` — Complete 20-step pipeline: source image → depth reconstruction → mesh cleanup → PBR materials → turntable animation → multi-format export
 - `cleanup_depth_scan.py` — Import depth-scan OBJ, isolate primary artifact, remove noise, fill holes, make manifold, fix normals, export OBJ+STL
@@ -327,14 +374,17 @@ Unlike the automated JSON→render pipeline, the inhaler workflow is a set of st
 **Video compilation (inhaler-specific):**
 - `compile_h264.py` — Compile PNG frames → H.264 MP4 via Blender VSE (targets `campaign_salt_inhaler/frames/`)
 
-### `Modly/` — ML/3D tooling subproject
-- Contains a Python venv and two key components not directly integrated into the primary pipeline:
-  - `modly_mcp_bridge.py` — A separate stdio MCP server (register with `claude mcp add modly`) that connects to Ollama (`qwen2.5-coder:3b`) for AI-assisted 3D mesh code generation, executes trimesh scripts, exports OBJ/GLB/STL, and scans workspace assets
-  - `generate_inhaler.py` — Procedural trimesh generator for the Himalayan Salt Inhaler product (real-world dimensions, salt crystal geometry)
-- `Experiment/` contains OBJ meshes from pipe scans and Google Drive imports
-- `workspace/` contains reference images, generated meshes, `_generated_mesh.py` scripts, and ComfyUI workflow JSON files
-- `workflows/` contains ComfyUI workflow JSON files (~657 KB) referencing images in `workspace/` for AI image generation
-- `extensions/` and `models/` are empty (placeholders)
+### `Modly/` — ML/3D tooling subproject (⚠️ NOT on disk)
+
+The `Modly/` directory is **gitignored** and does not currently exist in the working tree. It was previously part of the repository and contained:
+- `modly_mcp_bridge.py` — A separate stdio MCP server (register with `claude mcp add modly`) that connects to Ollama (`qwen2.5-coder:3b`) for AI-assisted 3D mesh code generation, executes trimesh scripts, exports OBJ/GLB/STL, and scans workspace assets
+- `generate_inhaler.py` — Procedural trimesh generator for the Himalayan Salt Inhaler product (real-world dimensions, salt crystal geometry)
+- `Experiment/` — OBJ meshes from pipe scans and Google Drive imports
+- `workspace/` — Reference images, generated meshes, `_generated_mesh.py` scripts, ComfyUI workflow JSON files
+- `workflows/` — ComfyUI workflow JSON files (~657 KB) referencing images in `workspace/`
+- `extensions/` and `models/` — Empty placeholders
+
+The MCP bridge may still be registered as `modly` in `.claude.json` despite the directory's removal. Recreate from `Production_last_chance/` snapshots or git history if needed.
 
 ### `2Dti3D/` — Texture-manifest batch rendering (separate automation flow)
 - `automation_script.py` — Blender Python script that loads a `textureManifest.js` file (product name + image URL pairs scraped from Shopify), iterates through products, and renders each in Blender
@@ -363,10 +413,14 @@ python test_hotel_organic.py      # Queries DB → director → blender
 # Direct Blender invocation (skip server):
 "C:\Program Files\Blender Foundation\Blender 5.1\blender.exe" --background --python test_blender.py -- payload.json
 
-# MCP bridge (register with Claude Code):
+# MCP bridges (register with Claude Code):
 claude mcp add blender --transport stdio -- \
     "C:\Program Files\Blender Foundation\Blender 5.1\5.1\python\bin\python.exe" \
     "C:\Users\Public\Documents\BlenderAutomationOutputs\blender_mcp_bridge.py"
+
+claude mcp add comfy --transport stdio -- \
+    "C:\Program Files\Python311\python.exe" \
+    "C:\Users\Public\Documents\BlenderAutomationOutputs\comfy_mcp_bridge.py"
 
 # Director-Server database test:
 cd Director-Server && npm run test:ledger
@@ -390,6 +444,9 @@ On Unix, set `BLENDER_EXE` to the correct path before starting `listen_blender.p
 | `SHOPIFY_PUBLISH_URL` | `100.104.14.63:3002/api/publish_auto` | `autonomous_director.py` |
 | `RENDER_OUTPUT_DIR` | `C:\Users\Public\...` | `autonomous_director.py`, `blender_mcp_bridge.py` |
 | `KALIKO_HOST` | `100.104.14.63` | `blender_mcp_bridge.py` — remote services health check |
+| `COMFY_HOST` | `127.0.0.1` | `comfy_mcp_bridge.py` — ComfyUI server address |
+| `COMFY_PORT` | `8188` | `comfy_mcp_bridge.py` — ComfyUI server port |
+| `COMFY_INPUT_DIR` | ComfyUI-Shared/input | `comfy_mcp_bridge.py` — where to route generated images |
 
 ## File naming conventions
 
@@ -412,10 +469,17 @@ There is no automated test suite. Manual testing approaches:
 
 ## Operational notes
 
+- **⚠️ Hardcoded secrets:** Three files contain production credentials in plaintext:
+  - `test_hotel_organic.py` lines 9-10 — PostgreSQL password (`1278458kaliko787`)
+  - `Director-Server/lib/db.js` lines 14-15 — Same PostgreSQL password
+  - `generate_music.py` line 5 — MiniMax API key (`sk-api-LH...`)
+  - Extract all to env vars before reuse or committing.
 - `curlinsever.txt` contains operational scratchpad data (bearer tokens, cloudflared tunnel setup, Tailscale networking commands). Not documentation — don't commit secrets from it.
 - **HDRI dependency:** `test_blender.py` loads `studio.exr` from `C:\Users\Public\Documents\BlenderAutomationOutputs\studio.exr` for environment lighting. This file is **not in the repository** — it must be provided externally. If missing, Blender still renders but without environment reflections (the world shader node setup will fail silently). `test_blender2.py` does not require this file (it omits HDRI entirely).
 - **GPU rendering:** `test_blender.py` forces `scene.cycles.device = 'GPU'`. If no compatible GPU is available, Blender will fall back to CPU silently.
+- **FFmpeg path:** `compile_final.py` uses `C:\Program Files\BlueStacks_nxt\ffmpeg.exe` — FFmpeg bundled with the BlueStacks Android emulator. Not a standard install path; update if BlueStacks is uninstalled.
 - Claude Code permissions are configured in `.claude/settings.local.json`.
-- The `.gitignore` excludes: `*.blend1`, `output_*.blend`, `*_frame_*.png`, `payload_dynamic_*.json`, `__pycache__/`, `server.pid`, `curlinsever.txt`, `test_output.blend`, `.b64`/`.tar.gz` deployment artifacts, `.tmp.driveupload/`, and `.claude/`.
+- The `.gitignore` excludes: `*.blend1`, `output_*.blend`, `*_frame_*.png`, `payload_dynamic_*.json`, `__pycache__/`, `server.pid`, `curlinsever.txt`, `test_output.blend`, `.b64`/`.tar.gz` deployment artifacts, `.tmp.driveupload/`, `.claude/`, all `campaign_*/` directories, all inhaler pipeline scripts, and `organize.py`.
 - `.tmp.drivedownload/` and `Muapi/` are **not** yet in `.gitignore` — consider adding them (Google Drive sync temp dir and marketing data scratch dir, respectively).
 - The Director-Server is an "island strategy" project — its Webpack config explicitly blocks resolution from the parent monorepo and forces all dependencies from its local `node_modules/`.
+- `Modly/` is gitignored and does not exist on disk, but may still be referenced by the `modly` MCP server registration in `.claude.json`. The `blender_projects/` directory (60+ UUID/numeric/slug subdirectories) holds `.blend` exports from past renders — also gitignored via `campaign_*/`.

@@ -367,10 +367,14 @@ def setup_headless_molecular_scene(cfg):
     molecule_target.rotation_euler = (0, 0, math.radians(360))
     molecule_target.keyframe_insert(data_path="rotation_euler", frame=frame_end)
     
-    # Make the motion smooth (Linear)
-    for fcurve in molecule_target.animation_data.action.fcurves:
-        for kp in fcurve.keyframe_points:
-            kp.interpolation = 'LINEAR'
+    # Make the motion smooth (Linear) — Blender 5.x layered animation API
+    action = molecule_target.animation_data.action
+    for layer in action.layers:
+        for strip in layer.strips:
+            for bag in strip.channelbags:
+                for fcurve in bag.fcurves:
+                    for kp in fcurve.keyframe_points:
+                        kp.interpolation = 'LINEAR'
     
     print(f"[ANIM] Added 360-degree rotation across {frame_end - frame_start} frames")
 
